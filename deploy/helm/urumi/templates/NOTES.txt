@@ -1,0 +1,8 @@
+Storefront: {{ .Values.wordpress.url }}
+Dashboard:  {{ .Values.gateway.publicUrl }}
+MCP:        {{ .Values.gateway.publicUrl }}/mcp
+
+WooCommerce admin user: {{ .Values.wordpress.adminUser }}
+Gateway admin email is in the gateway Secret.
+
+The WooCommerce MCP Service is ClusterIP. NetworkPolicy woocommerce-mcp allows only gateway pods.

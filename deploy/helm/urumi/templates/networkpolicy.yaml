@@ -1,0 +1,140 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: woocommerce-mcp
+  namespace: {{ .Values.namespaces.shop }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: woocommerce-mcp
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromGateway" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wordpress
+  namespace: {{ .Values.namespaces.shop }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wordpress
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromController" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 80
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: woocommerce-mcp
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mariadb
+  namespace: {{ .Values.namespaces.shop }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wordpress
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wc-bootstrap
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: {{ .Values.namespaces.platform }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromGateway" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: weather-mcp
+  namespace: {{ .Values.namespaces.platform }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: weather-mcp
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromGateway" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fx-mcp
+  namespace: {{ .Values.namespaces.platform }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fx-mcp
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromGateway" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: {{ .Values.namespaces.platform }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromController" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dashboard
+  namespace: {{ .Values.namespaces.platform }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dashboard
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- include "agentdock.ingressFromController" . | nindent 4 }}
+      ports:
+        - protocol: TCP
+          port: 8080

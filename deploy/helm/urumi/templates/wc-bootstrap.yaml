@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wc-bootstrap
+  namespace: {{ .Values.namespaces.shop }}
+data:
+  wc-setup.sh: |
+{{ .Files.Get "files/wc-setup.sh" | indent 4 }}
+  wc-setup.php: |
+{{ .Files.Get "files/wc-setup.php" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wc-bootstrap
+  namespace: {{ .Values.namespaces.shop }}
+  labels:
+    app.kubernetes.io/name: wc-bootstrap
+    app.kubernetes.io/part-of: agentdock
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-weight: "5"
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 1200
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wc-bootstrap
+        app.kubernetes.io/part-of: agentdock
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: bootstrap
+          image: {{ .Values.images.wordpressCli }}
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/wc-setup.sh"]
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mariadb
+            - name: WORDPRESS_URL
+              value: {{ .Values.wordpress.url | quote }}
+            - name: WORDPRESS_TITLE
+              value: {{ .Values.wordpress.title | quote }}
+            - name: WORDPRESS_ADMIN_USER
+              value: {{ .Values.wordpress.adminUser | quote }}
+            - name: WORDPRESS_ADMIN_EMAIL
+              value: {{ .Values.wordpress.adminEmail | quote }}
+          envFrom:
+            - secretRef:
+                name: shop
+          resources:
+            {{- toYaml .Values.resources.wordpress | nindent 12 }}
+          volumeMounts:
+            - name: wordpress
+              mountPath: /var/www/html
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: wordpress
+          persistentVolumeClaim:
+            claimName: wordpress
+        - name: scripts
+          configMap:
+            name: wc-bootstrap

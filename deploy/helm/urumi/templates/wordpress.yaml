@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress
+  namespace: {{ .Values.namespaces.shop }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.storage.wordpressSize }}
+  {{- include "agentdock.storageClass" . | nindent 2 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: {{ .Values.namespaces.shop }}
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/part-of: agentdock
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wordpress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wordpress
+        app.kubernetes.io/part-of: agentdock
+    spec:
+      securityContext:
+        fsGroup: 33
+      containers:
+        - name: wordpress
+          image: {{ .Values.images.wordpress }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mariadb
+            - name: WORDPRESS_DB_NAME
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_NAME } }
+            - name: WORDPRESS_DB_USER
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_USER } }
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_PASSWORD } }
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_HOME', {{ .Values.wordpress.url | quote }});
+                define('WP_SITEURL', {{ .Values.wordpress.url | quote }});
+                if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $_SERVER['HTTPS'] = 'on'; }
+                $agentdockUri = $_SERVER['REQUEST_URI'] ?? '';
+                if (str_contains($agentdockUri, '/wp-json/') || str_contains($agentdockUri, 'rest_route=')) { $_SERVER['HTTPS'] = 'on'; }
+          resources:
+            {{- toYaml .Values.resources.wordpress | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/www/html
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wordpress
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  namespace: {{ .Values.namespaces.shop }}
+spec:
+  selector:
+    app.kubernetes.io/name: wordpress
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

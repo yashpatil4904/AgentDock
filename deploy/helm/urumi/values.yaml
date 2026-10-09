@@ -1,0 +1,84 @@
+namespaces:
+  shop: shop
+  platform: platform
+
+images:
+  mariadb: mariadb:11.4
+  wordpress: wordpress:7.0-php8.3-apache
+  wordpressCli: wordpress:cli-php8.3
+  postgres: postgres:16-alpine
+  woocommerceMcp: agentdock/woocommerce-mcp:local
+  weatherMcp: agentdock/weather-mcp:local
+  fxMcp: agentdock/fx-mcp:local
+  gateway: agentdock/gateway:local
+  dashboard: agentdock/dashboard:local
+  pullPolicy: IfNotPresent
+
+ingress:
+  className: nginx
+  namespace: ingress-nginx
+  podLabels:
+    app.kubernetes.io/name: ingress-nginx
+  shopHost: shop.localtest.me
+  appHost: app.localtest.me
+
+storage:
+  className: local-path
+  mariadbSize: 5Gi
+  wordpressSize: 5Gi
+  postgresSize: 2Gi
+
+resources:
+  mariadb:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  wordpress:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  postgres:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  mcp:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  gateway:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  dashboard:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
+wordpress:
+  title: AgentDock Store
+  adminUser: shopadmin
+  adminEmail: shopadmin@example.com
+  url: http://shop.localtest.me
+
+gateway:
+  publicUrl: http://app.localtest.me
+  cookieSecure: false
+  groqModel: openai/gpt-oss-120b
+  replicas: 1
+  adminName: Admin
+
+internalUrls:
+  woocommerceMcp: http://woocommerce-mcp.shop.svc.cluster.local:8080/mcp
+  weatherMcp: http://weather-mcp.platform.svc.cluster.local:8080/mcp
+  fxMcp: http://fx-mcp.platform.svc.cluster.local:8080/mcp
+  wordpress: http://wordpress.shop.svc.cluster.local
+
+secrets:
+  mariadbRootPassword: ""
+  mariadbPassword: ""
+  mariadbUser: woocommerce
+  mariadbDatabase: woocommerce
+  wordpressAdminPassword: ""
+  wcConsumerKey: ""
+  wcConsumerSecret: ""
+  postgresPassword: ""
+  postgresUser: agentdock
+  postgresDatabase: agentdock
+  adminEmail: admin@agentdock.local
+  adminPassword: ""
+  credentialKey: ""
+  groqApiKey: ""

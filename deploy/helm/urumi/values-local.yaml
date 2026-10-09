@@ -1,0 +1,21 @@
+# Kind + ingress-nginx. shop.localtest.me and app.localtest.me resolve to 127.0.0.1.
+ingress:
+  className: nginx
+  namespace: ingress-nginx
+  podLabels:
+    app.kubernetes.io/name: ingress-nginx
+  shopHost: shop.localtest.me
+  appHost: app.localtest.me
+
+storage:
+  className: local-path
+
+wordpress:
+  url: http://shop.localtest.me
+
+gateway:
+  publicUrl: http://app.localtest.me
+  cookieSecure: false
+
+images:
+  pullPolicy: IfNotPresent

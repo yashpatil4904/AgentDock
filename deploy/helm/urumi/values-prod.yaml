@@ -1,0 +1,29 @@
+# k3s on a VPS. Traefik and the local-path StorageClass are already installed.
+# Replace the hosts, turn on the secure cookie, and point images at a registry
+# or at tags you imported with `k3s ctr images import`. Pass secrets in a
+# separate file that is not committed.
+ingress:
+  className: traefik
+  namespace: kube-system
+  podLabels:
+    app.kubernetes.io/name: traefik
+  shopHost: shop.example.com
+  appHost: app.example.com
+
+storage:
+  className: local-path
+
+wordpress:
+  url: https://shop.example.com
+
+gateway:
+  publicUrl: https://app.example.com
+  cookieSecure: true
+
+images:
+  woocommerceMcp: agentdock/woocommerce-mcp:1.0.0
+  weatherMcp: agentdock/weather-mcp:1.0.0
+  fxMcp: agentdock/fx-mcp:1.0.0
+  gateway: agentdock/gateway:1.0.0
+  dashboard: agentdock/dashboard:1.0.0
+  pullPolicy: IfNotPresent
