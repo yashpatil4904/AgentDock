@@ -12,6 +12,7 @@ images:
   fxMcp: agentdock/fx-mcp:local
   gateway: agentdock/gateway:local
   dashboard: agentdock/dashboard:local
+  provisioner: agentdock/provisioner:local
   pullPolicy: IfNotPresent
 
 ingress:
@@ -60,6 +61,12 @@ gateway:
   groqModel: openai/gpt-oss-120b
   replicas: 1
   adminName: Admin
+
+stores:
+  maxPerUser: 3
+  timeoutSeconds: 900
+  hostSuffix: localtest.me
+  urlScheme: http
 
 internalUrls:
   woocommerceMcp: http://woocommerce-mcp.shop.svc.cluster.local:8080/mcp

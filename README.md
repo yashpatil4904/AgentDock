@@ -4,7 +4,7 @@ WooCommerce on Kubernetes, with a team MCP gateway in front of it. An admin regi
 
 The WooCommerce MCP server in this repo is ours. It speaks Streamable HTTP and calls the store with the WooCommerce REST API. Weather and FX are two more upstreams so the gateway has three servers to aggregate.
 
-Bonus multi-store provisioning is not implemented. A working core is the goal.
+A user can also create more stores from the dashboard. Each one is provisioned in its own namespace and registered with the gateway.
 
 ## What runs where
 
@@ -15,6 +15,7 @@ Bonus multi-store provisioning is not implemented. A working core is the goal.
 | `shop` | WooCommerce MCP server | Gateway pods only |
 | `platform` | Postgres (PVC) | Gateway pods only |
 | `platform` | Gateway | Ingress `/api` and `/mcp` |
+| `platform` | Provisioner | Kubernetes API. Creates `store-*` namespaces |
 | `platform` | Dashboard | Ingress `/` |
 | `platform` | Weather MCP, FX MCP | Gateway pods only |
 
@@ -161,6 +162,16 @@ npm test
 
 That builds the services and checks the WooCommerce tool path against a fake REST server, tool-name prefixing, a dead upstream being dropped from the list, credential encryption, and live Streamable HTTP calls to weather and FX.
 
+## Extra stores
+
+Open Stores in the dashboard. Enter a store name and the WooCommerce admin password twice. The username is `shopadmin`. Several stores can be created together. The row moves from Provisioning to Ready, or to Failed with a reason. Retry continues in the same namespace. Delete removes the namespace, its volumes and Secrets, and the store's MCP registration.
+
+A store named East is published at `http://east.localtest.me`. Its tools are prefixed with the store slug, so `east__list_orders` is a different store from `woocommerce__list_orders`. The Stores row shows the exact prefix. Ask chat: "Compare today's orders in the platform store and East." Then delete East and refresh Servers. Those tools are gone, and `kubectl get ns` no longer lists `store-east`.
+
+Each store namespace has its own MariaDB, WordPress, WooCommerce MCP server, Ingress, ResourceQuota, and LimitRange. NetworkPolicies allow the MCP server to reach only its own WordPress and DNS, and allow MariaDB only from WordPress and the bootstrap Job in that namespace. A user can own at most 3 stores. Provisioning fails cleanly after 15 minutes and can be retried. The provisioner is safe to restart while a store is still provisioning.
+
+On a public host, set `stores.hostSuffix` and `stores.urlScheme` in `values-prod.yaml`. The suffix needs a wildcard DNS name.
+
 ## Not in this submission
 
-Multi-store provisioning, OAuth, per-tool role permissions, hosted MCP servers, and a live VPS deploy. `values-prod.yaml` and the k3s section above are the production path for the same chart.
+OAuth, per-tool role permissions, hosted MCP servers, and a live VPS deploy. `values-prod.yaml` and the k3s section above are the production path for the same chart.

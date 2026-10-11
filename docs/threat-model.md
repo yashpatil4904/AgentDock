@@ -1,6 +1,6 @@
 # Threat model
 
-This is one team sharing a store. It is not a multi-tenant host. The bonus multi-store isolation work is not in this build.
+The platform shop is one team sharing a store. Stores created from the dashboard are separate namespaces; see Store namespaces below.
 
 ## Shared upstream credentials
 
@@ -37,6 +37,12 @@ Members share the same upstream tools, so a member can create products or change
 They also cannot reach the WooCommerce MCP, weather, or FX Services from outside the cluster. Those Services are ClusterIP, and NetworkPolicies accept connections only from gateway pods. MariaDB accepts only WordPress and the bootstrap Job. Postgres accepts only the gateway.
 
 The dashboard session is an HttpOnly cookie, `SameSite=Lax`. It is not a token the chat model is given. The chat path uses the logged-in user id on the server when it writes the audit log.
+
+## Store namespaces
+
+A store created from the dashboard is a separate namespace. Its MariaDB NetworkPolicy accepts connections only from the WordPress and bootstrap pods in that same namespace. Its MCP server's egress policy allows only its own WordPress on port 80 and DNS in `kube-system`. It cannot open a connection to another store's database or WordPress. The gateway is the only caller allowed into the MCP server.
+
+The provisioner service account can create and delete namespaces and the resources inside them. The process refuses any namespace that does not match `store-*`, and it will not delete the platform `woocommerce`, `weather`, or `fx` registrations. A user can own at most three stores. Members see and delete only their own. Kind's default CNI and k3s's default Flannel do not enforce NetworkPolicy; the policies are in the namespace so a policy-aware CNI applies them without a chart change.
 
 ## What this does not claim
 

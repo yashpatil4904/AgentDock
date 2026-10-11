@@ -4,6 +4,7 @@ import { runChat } from "./chat.js";
 import { generateApiKey, hashApiKey, verifyPassword } from "./crypto.js";
 import {
   createSession,
+  createStore,
   createUser,
   deleteServer,
   deleteSession,
@@ -16,12 +17,16 @@ import {
   listApiKeys,
   listAudit,
   listPublicServers,
+  listStores,
   listUsers,
+  markStoreDeleting,
+  retryStore,
   revokeApiKey,
+  StoreLimitError,
   updateServer,
 } from "./db.js";
 import { HttpError } from "./errors.js";
-import { assertSlug, slugFromName } from "./routing.js";
+import { assertSlug, slugFromName, storeIdentity } from "./routing.js";
 import { pollOnce } from "./poller.js";
 import type { AuthType, User } from "./types.js";
 import { assertUpstreamUrl } from "./url-guard.js";
@@ -223,6 +228,71 @@ api.post("/keys/:id/revoke", requireUser, async (req, res: AppResponse) => {
 api.get("/audit", requireUser, async (_req, res: AppResponse) => {
   const user = res.locals.user as User;
   res.json(await listAudit(user.role === "admin" ? undefined : user.id));
+});
+
+function storeHostSuffix(): string {
+  return process.env.STORE_HOST_SUFFIX || "localtest.me";
+}
+
+function storeUrlScheme(): string {
+  return process.env.STORE_URL_SCHEME === "https" ? "https" : "http";
+}
+
+function maxStoresPerUser(): number {
+  const parsed = Number(process.env.STORES_MAX_PER_USER ?? 3);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 3;
+}
+
+api.get("/stores", requireUser, async (_req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  res.json(await listStores(user.role === "admin" ? undefined : user.id));
+});
+
+api.post("/stores", requireUser, async (req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  const body = z.object({
+    name: z.string().min(1).max(60),
+    password: z.string().min(8).max(200),
+    confirmPassword: z.string().min(8).max(200),
+  }).refine((value) => value.password === value.confirmPassword, { message: "Passwords do not match" }).parse(req.body);
+  let slug: string;
+  let identity: { namespace: string; url: string };
+  try {
+    slug = slugFromName(body.name);
+    identity = storeIdentity(slug, storeHostSuffix(), storeUrlScheme());
+  } catch (error) {
+    throw new HttpError(400, error instanceof Error ? error.message : "That store name cannot be used");
+  }
+  try {
+    const created = await createStore({
+      ownerId: user.id,
+      name: body.name.trim(),
+      slug,
+      namespace: identity.namespace,
+      url: identity.url,
+      adminPassword: body.password,
+      maxPerUser: maxStoresPerUser(),
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    if (error instanceof StoreLimitError) throw new HttpError(409, error.message);
+    if (error instanceof Error && /duplicate key/.test(error.message)) throw new HttpError(409, "A store with that name already exists");
+    throw error;
+  }
+});
+
+api.delete("/stores/:id", requireUser, async (req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  const deleted = await markStoreDeleting(idParam(req.params.id), user.role === "admin" ? undefined : user.id);
+  if (!deleted) throw new HttpError(404, "Store not found");
+  res.json(deleted);
+});
+
+api.post("/stores/:id/retry", requireUser, async (req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  const retried = await retryStore(idParam(req.params.id), user.role === "admin" ? undefined : user.id);
+  if (!retried) throw new HttpError(404, "Failed store not found");
+  res.json(retried);
 });
 
 api.post("/chat", requireUser, async (req, res: AppResponse) => {

@@ -20,10 +20,15 @@ gateway:
   publicUrl: https://app.example.com
   cookieSecure: true
 
+stores:
+  hostSuffix: example.com
+  urlScheme: https
+
 images:
   woocommerceMcp: agentdock/woocommerce-mcp:1.0.0
   weatherMcp: agentdock/weather-mcp:1.0.0
   fxMcp: agentdock/fx-mcp:1.0.0
   gateway: agentdock/gateway:1.0.0
   dashboard: agentdock/dashboard:1.0.0
+  provisioner: agentdock/provisioner:1.0.0
   pullPolicy: IfNotPresent

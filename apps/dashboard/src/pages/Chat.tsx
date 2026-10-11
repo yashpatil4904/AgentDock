@@ -1,10 +1,53 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api, ApiError, type ChatTrace } from "../api";
+import { formatReply } from "../formatReply";
 
 interface Turn {
   role: "user" | "assistant";
   content: string;
   toolCalls?: ChatTrace[];
+}
+
+function argumentRows(value: unknown): Array<{ key: string; value: string }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value).flatMap(([key, item]) => {
+    if (item === undefined || item === null || item === "") return [];
+    return [{ key, value: typeof item === "string" ? item : JSON.stringify(item) }];
+  });
+}
+
+function ToolCalls({ calls }: { calls: ChatTrace[] }) {
+  const label = calls.length === 1 ? `Used ${calls[0]?.name}` : `Used ${calls.length} tools`;
+  return (
+    <details className="trace">
+      <summary>{label}</summary>
+      <div className="tool-list">
+        {calls.map((call, index) => {
+          const rows = argumentRows(call.arguments);
+          return (
+            <div className="tool-call" key={index}>
+              <div className="tool-name">
+                <code>{call.name}</code>
+                {call.isError ? <span className="error">failed</span> : null}
+              </div>
+              {rows.length ? (
+                <dl>
+                  {rows.map((row) => (
+                    <div key={row.key}>
+                      <dt>{row.key}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
 }
 
 export function ChatPage() {
@@ -23,17 +66,14 @@ export function ChatPage() {
       <div className="chat">
         {turns.map((turn, index) => (
           <div className={`bubble ${turn.role}`} key={index}>
-            <div>{turn.content}</div>
-            {turn.toolCalls?.length ? (
-              <div className="trace">
-                {turn.toolCalls.map((call, callIndex) => (
-                  <div key={callIndex}>
-                    <code>{call.name}</code> {call.isError ? <span className="error">failed</span> : <span className="muted">called</span>}
-                    <pre>{JSON.stringify(call.arguments, null, 2)}</pre>
-                  </div>
-                ))}
+            {turn.role === "assistant" ? (
+              <div className="md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatReply(turn.content)}</ReactMarkdown>
               </div>
-            ) : null}
+            ) : (
+              <div className="plain">{turn.content}</div>
+            )}
+            {turn.toolCalls?.length ? <ToolCalls calls={turn.toolCalls} /> : null}
           </div>
         ))}
       </div>

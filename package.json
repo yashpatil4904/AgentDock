@@ -2,7 +2,7 @@
   "name": "agentdock",
   "private": true,
   "scripts": {
-    "build": "npm run build --prefix apps/woocommerce-mcp && npm run build --prefix apps/weather-mcp && npm run build --prefix apps/fx-mcp && npm run build --prefix apps/gateway && npm run build --prefix apps/dashboard",
-    "test": "npm run build --prefix apps/woocommerce-mcp && npm test --prefix apps/woocommerce-mcp && npm run build --prefix apps/weather-mcp && npm run build --prefix apps/fx-mcp && npm run build --prefix apps/gateway && npm test --prefix apps/gateway"
+    "build": "npm run build --prefix apps/woocommerce-mcp && npm run build --prefix apps/weather-mcp && npm run build --prefix apps/fx-mcp && npm run build --prefix apps/gateway && npm run build --prefix apps/provisioner && npm run build --prefix apps/dashboard",
+    "test": "npm run build --prefix apps/woocommerce-mcp && npm test --prefix apps/woocommerce-mcp && npm run build --prefix apps/weather-mcp && npm run build --prefix apps/fx-mcp && npm run build --prefix apps/gateway && npm test --prefix apps/gateway && npm run build --prefix apps/provisioner && npm test --prefix apps/provisioner"
   }
 }

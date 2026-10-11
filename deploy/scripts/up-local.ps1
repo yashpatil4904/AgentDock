@@ -24,7 +24,8 @@ $images = @(
   "weather-mcp",
   "fx-mcp",
   "gateway",
-  "dashboard"
+  "dashboard",
+  "provisioner"
 )
 foreach ($image in $images) {
   docker build -t "agentdock/${image}:local" "apps/$image"
@@ -42,6 +43,7 @@ kubectl -n shop rollout status deployment/wordpress --timeout=300s
 kubectl -n shop wait --for=condition=complete job/wc-bootstrap --timeout=900s
 kubectl -n platform rollout status deployment/gateway --timeout=180s
 kubectl -n platform rollout status deployment/dashboard --timeout=180s
+kubectl -n platform rollout status deployment/provisioner --timeout=180s
 
 Write-Host "Storefront: http://shop.localtest.me"
 Write-Host "Dashboard:  http://app.localtest.me"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { collectTools } from "./aggregate.js";
-import { parseQualifiedToolName, qualifyToolName, slugFromName } from "./routing.js";
+import { parseQualifiedToolName, qualifyToolName, slugFromName, storeIdentity } from "./routing.js";
 import { assertUpstreamUrl } from "./url-guard.js";
 
 test("prefixes keep identical tool names distinct and reversible", () => {
@@ -27,6 +27,16 @@ test("a dead upstream is omitted and the other server's tools remain", async () 
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0]?.slug, "weather");
   assert.match(result.tools[0]?.description ?? "", /WooCommerce/);
+});
+
+test("a store slug becomes its own namespace and host", () => {
+  assert.deepEqual(storeIdentity("east_shop", "localtest.me", "http"), {
+    namespace: "store-east-shop",
+    host: "east-shop.localtest.me",
+    url: "http://east-shop.localtest.me",
+  });
+  assert.throws(() => storeIdentity("woocommerce", "localtest.me", "http"), /reserved/);
+  assert.throws(() => storeIdentity("shop", "localtest.me", "http"), /reserved/);
 });
 
 test("slug derivation is stable and metadata addresses are refused", () => {

@@ -8,6 +8,7 @@ export function Layout({ user, onLogout, children }: { user: User; onLogout: () 
       <nav className="nav">
         <div className="brand">AgentDock<span>Team MCP gateway</span></div>
         <NavLink to="/" end>Servers</NavLink>
+        <NavLink to="/stores">Stores</NavLink>
         <NavLink to="/chat">Chat</NavLink>
         <NavLink to="/keys">API keys</NavLink>
         <NavLink to="/audit">Audit log</NavLink>

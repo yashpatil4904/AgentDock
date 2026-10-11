@@ -46,6 +46,20 @@ export interface AuditRow {
   error: string | null;
 }
 
+export interface Store {
+  id: string;
+  name: string;
+  slug: string;
+  namespace: string;
+  status: "provisioning" | "ready" | "failed" | "deleting";
+  url: string;
+  error: string | null;
+  detail: string | null;
+  createdAt: string;
+  ownerEmail: string;
+  toolPrefix: string;
+}
+
 export interface ChatTrace {
   name: string;
   arguments: unknown;
@@ -92,6 +106,11 @@ export const api = {
   createKey: (body: { name: string; userId?: string }) => request<ApiKey & { token: string }>("/api/keys", { method: "POST", body: JSON.stringify(body) }),
   revokeKey: (id: string) => request<{ ok: boolean }>(`/api/keys/${id}/revoke`, { method: "POST" }),
   audit: () => request<AuditRow[]>("/api/audit"),
+  stores: () => request<Store[]>("/api/stores"),
+  createStore: (name: string, password: string, confirmPassword: string) =>
+    request<Store>("/api/stores", { method: "POST", body: JSON.stringify({ name, password, confirmPassword }) }),
+  deleteStore: (id: string) => request<Store>(`/api/stores/${id}`, { method: "DELETE" }),
+  retryStore: (id: string) => request<Store>(`/api/stores/${id}/retry`, { method: "POST" }),
   chat: (message: string, history: Array<{ role: "user" | "assistant"; content: string }>) =>
     request<{ message: string; toolCalls: ChatTrace[] }>("/api/chat", { method: "POST", body: JSON.stringify({ message, history }) }),
 };

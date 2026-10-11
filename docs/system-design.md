@@ -38,6 +38,14 @@ Upstream URL credentials are AES-256-GCM ciphertext in Postgres. The 32-byte key
 - Images are registry tags (or tags imported with `k3s ctr images import`) instead of `:local` images loaded into Kind.
 - Secrets stay in a file outside git, passed with `-f`. Nothing secret is in the image or the chart defaults.
 
+## Extra stores
+
+The platform shop in the `shop` namespace stays the Helm-managed store. Its tools keep the `woocommerce__` prefix. Stores created in the dashboard are rows in Postgres (`provisioning`, `ready`, `failed`, or `deleting`). A separate provisioner reconciles those rows through the Kubernetes API. It does not shell out to Helm. Each store gets a `store-<slug>` namespace with its own Secret, MariaDB and WordPress volumes, WooCommerce bootstrap Job, MCP Deployment, Ingress, ResourceQuota, LimitRange, and NetworkPolicies. When the bootstrap Job has succeeded and the MCP server is ready, the provisioner inserts an `mcp_servers` row. Tool names are `{slug}__{tool}`, and the description is prefixed with the store name.
+
+Create is an insert. The work happens in the reconciler, so several stores proceed at once, and a restart continues from the row. Steps create a resource only when it is missing, so a retry does not rotate the database password or duplicate the namespace. A failed bootstrap Job is deleted and created again. After 15 minutes the row becomes `failed` with the step it was stuck on. Retry resets the clock and keeps the namespace. Delete drops the MCP registration first, then the namespace, which takes the volumes and Secrets with it. The row is removed only after the namespace is gone.
+
+The provisioner holds a Postgres advisory lock for each pass, so a second replica would wait instead of creating the same Job twice. This chart runs one replica.
+
 ## Upgrade and rollback
 
 Application images and the chart version move together.

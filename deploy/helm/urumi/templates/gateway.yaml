@@ -40,6 +40,12 @@ spec:
               value: {{ .Values.internalUrls.weatherMcp | quote }}
             - name: FX_MCP_URL
               value: {{ .Values.internalUrls.fxMcp | quote }}
+            - name: STORES_MAX_PER_USER
+              value: {{ .Values.stores.maxPerUser | quote }}
+            - name: STORE_HOST_SUFFIX
+              value: {{ .Values.stores.hostSuffix | quote }}
+            - name: STORE_URL_SCHEME
+              value: {{ .Values.stores.urlScheme | quote }}
           envFrom:
             - secretRef:
                 name: gateway

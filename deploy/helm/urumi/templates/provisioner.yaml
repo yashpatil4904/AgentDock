@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provisioner
+  namespace: {{ .Values.namespaces.platform }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentdock-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services", "persistentvolumeclaims", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentdock-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentdock-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: provisioner
+    namespace: {{ .Values.namespaces.platform }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provisioner
+  namespace: {{ .Values.namespaces.platform }}
+  labels:
+    app.kubernetes.io/name: provisioner
+    app.kubernetes.io/part-of: agentdock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: provisioner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: provisioner
+        app.kubernetes.io/part-of: agentdock
+    spec:
+      serviceAccountName: provisioner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: provisioner
+          image: {{ .Values.images.provisioner }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: gateway
+                  key: DATABASE_URL
+            - name: GATEWAY_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gateway
+                  key: GATEWAY_CREDENTIAL_KEY
+            - name: STORE_TIMEOUT_SECONDS
+              value: {{ .Values.stores.timeoutSeconds | quote }}
+            - name: INGRESS_CLASS
+              value: {{ .Values.ingress.className | quote }}
+            - name: STORAGE_CLASS
+              value: {{ .Values.storage.className | quote }}
+            - name: INGRESS_NAMESPACE
+              value: {{ .Values.ingress.namespace | quote }}
+            - name: GATEWAY_NAMESPACE
+              value: {{ .Values.namespaces.platform | quote }}
+            - name: INGRESS_POD_LABELS
+              value: {{ .Values.ingress.podLabels | toJson | quote }}
+            - name: MARIADB_IMAGE
+              value: {{ .Values.images.mariadb | quote }}
+            - name: WORDPRESS_IMAGE
+              value: {{ .Values.images.wordpress | quote }}
+            - name: WORDPRESS_CLI_IMAGE
+              value: {{ .Values.images.wordpressCli | quote }}
+            - name: WOOCOMMERCE_MCP_IMAGE
+              value: {{ .Values.images.woocommerceMcp | quote }}
+            - name: IMAGE_PULL_POLICY
+              value: {{ .Values.images.pullPolicy | quote }}
+            - name: MARIADB_STORAGE
+              value: {{ .Values.storage.mariadbSize | quote }}
+            - name: WORDPRESS_STORAGE
+              value: {{ .Values.storage.wordpressSize | quote }}
+            - name: RESOURCES_JSON
+              value: {{ .Values.resources | toJson | quote }}
+          resources:
+            {{- toYaml .Values.resources.gateway | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false

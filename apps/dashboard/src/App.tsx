@@ -8,6 +8,7 @@ import { KeysPage } from "./pages/Keys";
 import { LoginPage } from "./pages/Login";
 import { MembersPage } from "./pages/Members";
 import { ServersPage } from "./pages/Servers";
+import { StoresPage } from "./pages/Stores";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -23,6 +24,7 @@ export function App() {
     <Layout user={user} onLogout={() => { void api.logout().finally(() => setUser(null)); }}>
       <Routes>
         <Route path="/" element={<ServersPage user={user} />} />
+        <Route path="/stores" element={<StoresPage user={user} />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/keys" element={<KeysPage user={user} />} />
         <Route path="/audit" element={<AuditPage />} />

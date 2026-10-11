@@ -69,6 +69,23 @@ export async function migrate(): Promise<void> {
       error TEXT
     );
     CREATE INDEX IF NOT EXISTS audit_logs_started_at_idx ON audit_logs (started_at DESC);
+    CREATE TABLE IF NOT EXISTS stores (
+      id UUID PRIMARY KEY,
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      namespace TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('provisioning', 'ready', 'failed', 'deleting')),
+      url TEXT NOT NULL,
+      mcp_server_id UUID,
+      error TEXT,
+      detail TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      provision_started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS stores_status_idx ON stores (status);
+    ALTER TABLE stores ADD COLUMN IF NOT EXISTS admin_password_ciphertext TEXT;
   `);
 }
 
@@ -333,4 +350,117 @@ export async function listAudit(userId?: string): Promise<Array<{ id: string; us
     success: row.success,
     error: row.error,
   }));
+}
+
+export type StoreStatus = "provisioning" | "ready" | "failed" | "deleting";
+
+export interface PublicStore {
+  id: string;
+  name: string;
+  slug: string;
+  namespace: string;
+  status: StoreStatus;
+  url: string;
+  error: string | null;
+  detail: string | null;
+  createdAt: string;
+  ownerEmail: string;
+  toolPrefix: string;
+}
+
+interface StoreJoinRow {
+  id: string;
+  name: string;
+  slug: string;
+  namespace: string;
+  status: StoreStatus;
+  url: string;
+  error: string | null;
+  detail: string | null;
+  created_at: Date;
+  owner_email: string;
+}
+
+function toPublicStore(row: StoreJoinRow): PublicStore {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    namespace: row.namespace,
+    status: row.status,
+    url: row.url,
+    error: row.error,
+    detail: row.detail,
+    createdAt: new Date(row.created_at).toISOString(),
+    ownerEmail: row.owner_email,
+    toolPrefix: `${row.slug}__`,
+  };
+}
+
+const storeSelect = `SELECT s.id, s.name, s.slug, s.namespace, s.status, s.url, s.error, s.detail, s.created_at, u.email AS owner_email
+  FROM stores s JOIN users u ON u.id = s.owner_id`;
+
+export async function listStores(ownerId?: string): Promise<PublicStore[]> {
+  const { rows } = await pool.query<StoreJoinRow>(
+    `${storeSelect} WHERE ($1::uuid IS NULL OR s.owner_id = $1) ORDER BY s.created_at DESC`,
+    [ownerId ?? null],
+  );
+  return rows.map(toPublicStore);
+}
+
+export class StoreLimitError extends Error {}
+
+export async function createStore(input: { ownerId: string; name: string; slug: string; namespace: string; url: string; adminPassword: string; maxPerUser: number }): Promise<PublicStore> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [input.ownerId]);
+    const count = await client.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM stores WHERE owner_id = $1 AND status <> 'deleting'",
+      [input.ownerId],
+    );
+    if ((count.rows[0]?.count ?? 0) >= input.maxPerUser) {
+      throw new StoreLimitError(`You can have at most ${input.maxPerUser} stores. Delete one before creating another.`);
+    }
+    const taken = await client.query("SELECT 1 FROM mcp_servers WHERE slug = $1", [input.slug]);
+    if ((taken.rowCount ?? 0) > 0) throw new StoreLimitError("That name is already used by an MCP server");
+    const id = randomUUID();
+    const adminPasswordCiphertext = encryptSecret(input.adminPassword, key());
+    const inserted = await client.query<StoreJoinRow>(
+      `INSERT INTO stores (id, owner_id, name, slug, namespace, status, url, admin_password_ciphertext)
+       VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7)
+       RETURNING id, name, slug, namespace, status, url, error, detail, created_at,
+         (SELECT email FROM users WHERE id = $2) AS owner_email`,
+      [id, input.ownerId, input.name, input.slug, input.namespace, input.url, adminPasswordCiphertext],
+    );
+    await client.query("COMMIT");
+    return toPublicStore(inserted.rows[0] as StoreJoinRow);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function markStoreDeleting(id: string, ownerId?: string): Promise<PublicStore | null> {
+  const { rows } = await pool.query<StoreJoinRow>(
+    `UPDATE stores s SET status = 'deleting', error = NULL, detail = 'Deleting the store', updated_at = now()
+     FROM users u
+     WHERE s.id = $1 AND u.id = s.owner_id AND ($2::uuid IS NULL OR s.owner_id = $2) AND s.status <> 'deleting'
+     RETURNING s.id, s.name, s.slug, s.namespace, s.status, s.url, s.error, s.detail, s.created_at, u.email AS owner_email`,
+    [id, ownerId ?? null],
+  );
+  return rows[0] ? toPublicStore(rows[0]) : null;
+}
+
+export async function retryStore(id: string, ownerId?: string): Promise<PublicStore | null> {
+  const { rows } = await pool.query<StoreJoinRow>(
+    `UPDATE stores s SET status = 'provisioning', error = NULL, detail = 'Retrying provisioning', updated_at = now(), provision_started_at = now()
+     FROM users u
+     WHERE s.id = $1 AND u.id = s.owner_id AND ($2::uuid IS NULL OR s.owner_id = $2) AND s.status = 'failed'
+     RETURNING s.id, s.name, s.slug, s.namespace, s.status, s.url, s.error, s.detail, s.created_at, u.email AS owner_email`,
+    [id, ownerId ?? null],
+  );
+  return rows[0] ? toPublicStore(rows[0]) : null;
 }

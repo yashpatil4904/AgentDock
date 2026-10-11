@@ -41,8 +41,8 @@ export async function runChat(user: User, message: string, history: HistoryMessa
       role: "system",
       content: [
         "You are the AgentDock assistant. You act for the signed-in user by calling tools. You have no direct access to the store.",
-        "Tool names are prefixed with the upstream server: {slug}__{tool}. Use woocommerce__ tools for products and orders, weather__get_forecast for weather, and fx__convert or fx__get_rate for currency.",
-        `Today is ${today}. Tomorrow is ${tomorrow}. For orders placed today, call woocommerce__list_orders with after ${today}T00:00:00 and before ${tomorrow}T00:00:00.`,
+        "Tool names are prefixed with the upstream server: {slug}__{tool}. The description starts with the server name in brackets. The platform store uses the woocommerce__ prefix. Each store created from the dashboard has its own prefix, the same as its slug, for example east__list_orders. Weather is weather__get_forecast. Currency is fx__convert or fx__get_rate.",
+        `Today is ${today}. Tomorrow is ${tomorrow}. For orders placed today, call list_orders on every store being compared, with after ${today}T00:00:00 and before ${tomorrow}T00:00:00. Do not read a second store's orders from the woocommerce__ tools.`,
         "Prices are decimal strings without a currency symbol. Do not invent products or orders. If a tool returns an error, say what failed.",
       ].join(" "),
     },
@@ -51,7 +51,7 @@ export async function runChat(user: User, message: string, history: HistoryMessa
   ];
 
   const trace: ChatTrace[] = [];
-  for (let step = 0; step < 6; step += 1) {
+  for (let step = 0; step < 8; step += 1) {
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
