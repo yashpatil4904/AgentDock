@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --test dist/routing.test.js dist/crypto.test.js dist/upstream.smoke.test.js"
+    "test": "node --test dist/routing.test.js dist/crypto.test.js dist/upstream.smoke.test.js dist/permissions.test.js dist/search.test.js dist/images.test.js dist/oauth.test.js dist/rate.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

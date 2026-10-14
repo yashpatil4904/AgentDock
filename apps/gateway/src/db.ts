@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { decryptSecret, encryptSecret, hashPassword } from "./crypto.js";
+import { decryptSecret, encryptSecret, hashApiKey, hashPassword } from "./crypto.js";
 import type { AuthType, InternalServer, PublicServer, Role, ServerStatus, User } from "./types.js";
 
 const { Pool } = pg;
@@ -13,7 +13,7 @@ export function setCredentialKey(key: Buffer): void {
   credentialKey = key;
 }
 
-function key(): Buffer {
+export function currentCredentialKey(): Buffer {
   if (!credentialKey) throw new Error("Credential key is not loaded");
   return credentialKey;
 }
@@ -86,6 +86,57 @@ export async function migrate(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS stores_status_idx ON stores (status);
     ALTER TABLE stores ADD COLUMN IF NOT EXISTS admin_password_ciphertext TEXT;
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      redirect_uris JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+      code_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      redirect_uri TEXT NOT NULL,
+      code_challenge TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      token_hash TEXT PRIMARY KEY,
+      refresh_hash TEXT UNIQUE,
+      client_id TEXT NOT NULL,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      refresh_expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS rate_events (
+      subject TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS rate_events_subject_idx ON rate_events (subject, created_at DESC);
+    CREATE TABLE IF NOT EXISTS server_metrics (
+      server_slug TEXT PRIMARY KEY,
+      calls BIGINT NOT NULL DEFAULT 0,
+      errors BIGINT NOT NULL DEFAULT 0,
+      total_duration_ms BIGINT NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS hosted_servers (
+      id UUID PRIMARY KEY,
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      image TEXT NOT NULL,
+      namespace TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('provisioning', 'ready', 'failed', 'deleting')),
+      detail TEXT,
+      error TEXT,
+      env_ciphertext TEXT,
+      mcp_server_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      provision_started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 
@@ -248,7 +299,7 @@ function toPublic(row: ServerRow): PublicServer {
 
 function toInternal(row: ServerRow): InternalServer {
   let credential: string | null = null;
-  if (row.credential_ciphertext) credential = decryptSecret(row.credential_ciphertext, key());
+  if (row.credential_ciphertext) credential = decryptSecret(row.credential_ciphertext, currentCredentialKey());
   return {
     id: row.id,
     name: row.name,
@@ -281,7 +332,7 @@ export async function getServerBySlug(slug: string): Promise<InternalServer | nu
 
 export async function insertServer(input: { name: string; slug: string; url: string; authType: AuthType; authHeader: string | null; credential: string | null; enabled: boolean }): Promise<PublicServer> {
   const id = randomUUID();
-  const ciphertext = input.credential ? encryptSecret(input.credential, key()) : null;
+  const ciphertext = input.credential ? encryptSecret(input.credential, currentCredentialKey()) : null;
   const status: ServerStatus = input.enabled ? "unreachable" : "disabled";
   const { rows } = await pool.query<ServerRow>(
     `INSERT INTO mcp_servers (id, name, slug, url, auth_type, auth_header, credential_ciphertext, enabled, status)
@@ -298,7 +349,7 @@ export async function updateServer(id: string, input: { name: string; url: strin
   if (!row) return null;
   let ciphertext = row.credential_ciphertext;
   if (input.authType === "none" || input.clearCredential) ciphertext = null;
-  else if (input.credential) ciphertext = encryptSecret(input.credential, key());
+  else if (input.credential) ciphertext = encryptSecret(input.credential, currentCredentialKey());
   const status: ServerStatus = input.enabled ? "unreachable" : "disabled";
   const { rows } = await pool.query<ServerRow>(
     `UPDATE mcp_servers
@@ -425,7 +476,7 @@ export async function createStore(input: { ownerId: string; name: string; slug: 
     const taken = await client.query("SELECT 1 FROM mcp_servers WHERE slug = $1", [input.slug]);
     if ((taken.rowCount ?? 0) > 0) throw new StoreLimitError("That name is already used by an MCP server");
     const id = randomUUID();
-    const adminPasswordCiphertext = encryptSecret(input.adminPassword, key());
+    const adminPasswordCiphertext = encryptSecret(input.adminPassword, currentCredentialKey());
     const inserted = await client.query<StoreJoinRow>(
       `INSERT INTO stores (id, owner_id, name, slug, namespace, status, url, admin_password_ciphertext)
        VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7)
@@ -463,4 +514,211 @@ export async function retryStore(id: string, ownerId?: string): Promise<PublicSt
     [id, ownerId ?? null],
   );
   return rows[0] ? toPublicStore(rows[0]) : null;
+}
+
+export async function findUserByAccessToken(hash: string): Promise<User | null> {
+  const { rows } = await pool.query<User>(
+    `SELECT u.id, u.email, u.name, u.role
+     FROM oauth_tokens t JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()`,
+    [hash],
+  );
+  return rows[0] ?? null;
+}
+
+export async function createOAuthClient(input: { clientId: string; clientName: string; redirectUris: string[] }): Promise<void> {
+  await pool.query(
+    "INSERT INTO oauth_clients (client_id, client_name, redirect_uris) VALUES ($1, $2, $3::jsonb)",
+    [input.clientId, input.clientName, JSON.stringify(input.redirectUris)],
+  );
+}
+
+export async function findOAuthClient(clientId: string): Promise<{ clientId: string; redirectUris: string[] } | null> {
+  const { rows } = await pool.query<{ client_id: string; redirect_uris: string[] }>(
+    "SELECT client_id, redirect_uris FROM oauth_clients WHERE client_id = $1",
+    [clientId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { clientId: row.client_id, redirectUris: row.redirect_uris };
+}
+
+export async function saveOAuthCode(input: { codeHash: string; clientId: string; userId: string; redirectUri: string; codeChallenge: string; expiresAt: Date }): Promise<void> {
+  await pool.query(
+    `INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [input.codeHash, input.clientId, input.userId, input.redirectUri, input.codeChallenge, input.expiresAt],
+  );
+}
+
+export async function takeOAuthCode(codeHash: string): Promise<{ clientId: string; userId: string; redirectUri: string; codeChallenge: string } | null> {
+  const { rows } = await pool.query<{ client_id: string; user_id: string; redirect_uri: string; code_challenge: string }>(
+    `UPDATE oauth_codes SET used_at = now()
+     WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now()
+     RETURNING client_id, user_id, redirect_uri, code_challenge`,
+    [codeHash],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { clientId: row.client_id, userId: row.user_id, redirectUri: row.redirect_uri, codeChallenge: row.code_challenge };
+}
+
+export async function issueOAuthTokens(input: { userId: string; clientId: string; accessTtlSeconds: number; refreshTtlSeconds: number }): Promise<{ accessToken: string; refreshToken: string }> {
+  const accessToken = `oat_${randomBytes(32).toString("base64url")}`;
+  const refreshToken = `ort_${randomBytes(32).toString("base64url")}`;
+  const now = Date.now();
+  await pool.query(
+    `INSERT INTO oauth_tokens (token_hash, refresh_hash, client_id, user_id, expires_at, refresh_expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [hashApiKey(accessToken), hashApiKey(refreshToken), input.clientId, input.userId, new Date(now + input.accessTtlSeconds * 1000), new Date(now + input.refreshTtlSeconds * 1000)],
+  );
+  return { accessToken, refreshToken };
+}
+
+export async function rotateOAuthRefresh(refreshHash: string, accessTtlSeconds: number, refreshTtlSeconds: number): Promise<{ accessToken: string; refreshToken: string } | null> {
+  const { rows } = await pool.query<{ client_id: string; user_id: string }>(
+    `UPDATE oauth_tokens SET revoked_at = now()
+     WHERE refresh_hash = $1 AND revoked_at IS NULL AND refresh_expires_at > now()
+     RETURNING client_id, user_id`,
+    [refreshHash],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return issueOAuthTokens({ userId: row.user_id, clientId: row.client_id, accessTtlSeconds, refreshTtlSeconds });
+}
+
+export async function takeRateSlot(subject: string, limit: number): Promise<boolean> {
+  await pool.query("DELETE FROM rate_events WHERE created_at < now() - interval '2 minutes'");
+  const { rows } = await pool.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM rate_events WHERE subject = $1 AND created_at > now() - interval '1 minute'",
+    [subject],
+  );
+  if ((rows[0]?.n ?? 0) >= limit) return false;
+  await pool.query("INSERT INTO rate_events (subject) VALUES ($1)", [subject]);
+  return true;
+}
+
+export async function recordServerMetric(serverSlug: string, durationMs: number, success: boolean): Promise<void> {
+  await pool.query(
+    `INSERT INTO server_metrics (server_slug, calls, errors, total_duration_ms)
+     VALUES ($1, 1, $2, $3)
+     ON CONFLICT (server_slug) DO UPDATE SET
+       calls = server_metrics.calls + 1,
+       errors = server_metrics.errors + $2,
+       total_duration_ms = server_metrics.total_duration_ms + $3`,
+    [serverSlug, success ? 0 : 1, Math.max(0, durationMs)],
+  );
+}
+
+export interface ServerMetric {
+  serverSlug: string;
+  calls: number;
+  errors: number;
+  totalDurationMs: number;
+}
+
+export async function listServerMetrics(): Promise<ServerMetric[]> {
+  const { rows } = await pool.query<{ server_slug: string; calls: string; errors: string; total_duration_ms: string }>(
+    "SELECT server_slug, calls::text, errors::text, total_duration_ms::text FROM server_metrics ORDER BY calls DESC",
+  );
+  return rows.map((row) => ({
+    serverSlug: row.server_slug,
+    calls: Number(row.calls),
+    errors: Number(row.errors),
+    totalDurationMs: Number(row.total_duration_ms),
+  }));
+}
+
+export interface PublicHosted {
+  id: string;
+  name: string;
+  slug: string;
+  image: string;
+  namespace: string;
+  status: StoreStatus;
+  detail: string | null;
+  error: string | null;
+  createdAt: string;
+  ownerEmail: string;
+}
+
+interface HostedRow {
+  id: string;
+  name: string;
+  slug: string;
+  image: string;
+  namespace: string;
+  status: StoreStatus;
+  error: string | null;
+  detail: string | null;
+  created_at: Date;
+  owner_email: string;
+}
+
+function toPublicHosted(row: HostedRow): PublicHosted {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    image: row.image,
+    namespace: row.namespace,
+    status: row.status,
+    detail: row.detail,
+    error: row.error,
+    createdAt: new Date(row.created_at).toISOString(),
+    ownerEmail: row.owner_email,
+  };
+}
+
+export async function createHosted(input: { ownerId: string; name: string; slug: string; namespace: string; image: string; envCiphertext: string | null }): Promise<PublicHosted> {
+  const id = randomUUID();
+  const { rows } = await pool.query<HostedRow>(
+    `INSERT INTO hosted_servers (id, owner_id, name, slug, image, namespace, status, env_ciphertext)
+     VALUES ($1, $2, $3, $4, $5, $6, 'provisioning', $7)
+     RETURNING id, name, slug, image, namespace, status, error, detail, created_at,
+       (SELECT email FROM users WHERE id = $2) AS owner_email`,
+    [id, input.ownerId, input.name, input.slug, input.image, input.namespace, input.envCiphertext],
+  );
+  return toPublicHosted(rows[0] as HostedRow);
+}
+
+export async function listHosted(): Promise<PublicHosted[]> {
+  const { rows } = await pool.query<HostedRow>(
+    `SELECT h.id, h.name, h.slug, h.image, h.namespace, h.status, h.error, h.detail, h.created_at, u.email AS owner_email
+     FROM hosted_servers h JOIN users u ON u.id = h.owner_id
+     ORDER BY h.created_at DESC`,
+  );
+  return rows.map((row) => toPublicHosted(row));
+}
+
+export async function hostedOwnsSlug(slug: string): Promise<boolean> {
+  const { rows } = await pool.query("SELECT 1 FROM hosted_servers WHERE slug = $1 AND status <> 'deleting'", [slug]);
+  return rows.length > 0;
+}
+
+export async function serverSlugById(id: string): Promise<string | null> {
+  const { rows } = await pool.query<{ slug: string }>("SELECT slug FROM mcp_servers WHERE id = $1", [id]);
+  return rows[0]?.slug ?? null;
+}
+
+export async function markHostedDeleting(id: string): Promise<PublicHosted | null> {
+  const { rows } = await pool.query<HostedRow>(
+    `UPDATE hosted_servers h SET status = 'deleting', error = NULL, detail = 'Deleting the hosted server', updated_at = now()
+     FROM users u
+     WHERE h.id = $1 AND u.id = h.owner_id AND h.status <> 'deleting'
+     RETURNING h.id, h.name, h.slug, h.image, h.namespace, h.status, h.error, h.detail, h.created_at, u.email AS owner_email`,
+    [id],
+  );
+  return rows[0] ? toPublicHosted(rows[0]) : null;
+}
+
+export async function retryHosted(id: string): Promise<PublicHosted | null> {
+  const { rows } = await pool.query<HostedRow>(
+    `UPDATE hosted_servers h SET status = 'provisioning', error = NULL, detail = 'Retrying', updated_at = now(), provision_started_at = now()
+     FROM users u
+     WHERE h.id = $1 AND u.id = h.owner_id AND h.status = 'failed'
+     RETURNING h.id, h.name, h.slug, h.image, h.namespace, h.status, h.error, h.detail, h.created_at, u.email AS owner_email`,
+    [id],
+  );
+  return rows[0] ? toPublicHosted(rows[0]) : null;
 }

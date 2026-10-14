@@ -13,7 +13,7 @@ import {
   type StoreRecord,
 } from "./db.js";
 import { Cluster, isNotFound, type K8sObject } from "./k8s.js";
-import { storeObjects, type StoreSecret } from "./resources.js";
+import { storeObjects, type StoreScripts, type StoreSecret } from "./resources.js";
 
 interface JobView {
   status?: {
@@ -53,7 +53,7 @@ async function readOrNull<T extends K8sObject>(cluster: Cluster, obj: K8sObject)
   }
 }
 
-export async function reconcileStore(store: StoreRecord, cluster: Cluster, config: ProvisionerConfig, scripts: { sh: string; php: string }): Promise<void> {
+export async function reconcileStore(store: StoreRecord, cluster: Cluster, config: ProvisionerConfig, scripts: StoreScripts): Promise<void> {
   if (store.status === "deleting") {
     await unregisterMcpServer(store.slug);
     const gone = await cluster.remove({

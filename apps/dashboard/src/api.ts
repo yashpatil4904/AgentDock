@@ -60,6 +60,26 @@ export interface Store {
   toolPrefix: string;
 }
 
+export interface ServerMetric {
+  serverSlug: string;
+  calls: number;
+  errors: number;
+  totalDurationMs: number;
+}
+
+export interface HostedServer {
+  id: string;
+  name: string;
+  slug: string;
+  image: string;
+  namespace: string;
+  status: "provisioning" | "ready" | "failed" | "deleting";
+  detail: string | null;
+  error: string | null;
+  createdAt: string;
+  ownerEmail: string;
+}
+
 export interface ChatTrace {
   name: string;
   arguments: unknown;
@@ -113,4 +133,10 @@ export const api = {
   retryStore: (id: string) => request<Store>(`/api/stores/${id}/retry`, { method: "POST" }),
   chat: (message: string, history: Array<{ role: "user" | "assistant"; content: string }>) =>
     request<{ message: string; toolCalls: ChatTrace[] }>("/api/chat", { method: "POST", body: JSON.stringify({ message, history }) }),
+  metrics: () => request<ServerMetric[]>("/api/metrics"),
+  hosted: () => request<HostedServer[]>("/api/hosted"),
+  createHosted: (name: string, image: string, env: Array<{ name: string; value: string }>) =>
+    request<HostedServer>("/api/hosted", { method: "POST", body: JSON.stringify({ name, image, env }) }),
+  deleteHosted: (id: string) => request<HostedServer>(`/api/hosted/${id}`, { method: "DELETE" }),
+  retryHosted: (id: string) => request<HostedServer>(`/api/hosted/${id}/retry`, { method: "POST" }),
 };

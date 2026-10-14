@@ -19,7 +19,7 @@ export function assertSlug(slug: string): void {
   }
 }
 
-const RESERVED_STORE_SLUGS = new Set(["woocommerce", "weather", "fx", "shop", "app", "store", "platform", "default", "kube", "kubernetes"]);
+const RESERVED_STORE_SLUGS = new Set(["woocommerce", "weather", "fx", "shop", "app", "store", "platform", "default", "kube", "kubernetes", "gateway"]);
 
 export function storeIdentity(slug: string, hostSuffix: string, scheme: string): { namespace: string; host: string; url: string } {
   assertSlug(slug);
@@ -33,6 +33,14 @@ export function storeIdentity(slug: string, hostSuffix: string, scheme: string):
   const namespace = `store-${label}`;
   const host = `${label}.${hostSuffix}`;
   return { namespace, host, url: `${scheme}://${host}` };
+}
+
+export function hostedIdentity(slug: string): { namespace: string } {
+  assertSlug(slug);
+  if (RESERVED_STORE_SLUGS.has(slug)) throw new Error(`The name "${slug}" is reserved`);
+  const label = slug.replace(/_/g, "-");
+  if (label.length > 50) throw new Error(`The name "${slug}" is too long`);
+  return { namespace: `hosted-${label}` };
 }
 
 export function slugFromName(name: string): string {

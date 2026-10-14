@@ -10,6 +10,24 @@ spec:
       storage: {{ .Values.storage.wordpressSize }}
   {{- include "agentdock.storageClass" . | nindent 2 }}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-apache
+  namespace: {{ .Values.namespaces.shop }}
+data:
+  ports.conf: |
+    Listen 8080
+  000-default.conf: |
+    <VirtualHost *:8080>
+      DocumentRoot /var/www/html
+      ErrorLog /proc/self/fd/2
+      CustomLog /proc/self/fd/1 combined
+    </VirtualHost>
+  nonroot.conf: |
+    PidFile /tmp/apache2.pid
+    Mutex posixsem
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,14 +51,53 @@ spec:
     spec:
       securityContext:
         fsGroup: 33
+      initContainers:
+        - name: prepare
+          image: {{ .Values.images.wordpress }}
+          imagePullPolicy: IfNotPresent
+          command: ["docker-entrypoint.sh", "true"]
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mariadb
+            - name: WORDPRESS_DB_NAME
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_NAME } }
+            - name: WORDPRESS_DB_USER
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_USER } }
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shop, key: WORDPRESS_DB_PASSWORD } }
+          volumeMounts:
+            - name: data
+              mountPath: /var/www/html
+          securityContext:
+            runAsUser: 0
       containers:
         - name: wordpress
           image: {{ .Values.images.wordpress }}
           imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "mkdir -p /tmp/apache2 && exec apache2 -DFOREGROUND"]
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
+            - name: APACHE_RUN_DIR
+              value: /tmp/apache2
+            - name: APACHE_PID_FILE
+              value: /tmp/apache2.pid
+            - name: APACHE_LOCK_DIR
+              value: /tmp
+            - name: APACHE_RUN_USER
+              value: www-data
+            - name: APACHE_RUN_GROUP
+              value: www-data
+            - name: APACHE_LOG_DIR
+              value: /tmp
             - name: WORDPRESS_DB_HOST
               value: mariadb
             - name: WORDPRESS_DB_NAME
@@ -77,10 +134,31 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/www/html
+            - name: apache-ports
+              mountPath: /etc/apache2/ports.conf
+              subPath: ports.conf
+            - name: apache-site
+              mountPath: /etc/apache2/sites-enabled/000-default.conf
+              subPath: 000-default.conf
+            - name: apache-nonroot
+              mountPath: /etc/apache2/conf-enabled/nonroot.conf
+              subPath: nonroot.conf
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: wordpress
+        - name: apache-ports
+          configMap:
+            name: wordpress-apache
+            items: [{ key: ports.conf, path: ports.conf }]
+        - name: apache-site
+          configMap:
+            name: wordpress-apache
+            items: [{ key: 000-default.conf, path: 000-default.conf }]
+        - name: apache-nonroot
+          configMap:
+            name: wordpress-apache
+            items: [{ key: nonroot.conf, path: nonroot.conf }]
 ---
 apiVersion: v1
 kind: Service

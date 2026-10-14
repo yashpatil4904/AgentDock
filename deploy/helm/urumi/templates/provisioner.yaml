@@ -14,16 +14,16 @@ rules:
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["secrets", "configmaps", "services", "persistentvolumeclaims", "resourcequotas", "limitranges"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies", "ingresses"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -91,6 +91,14 @@ spec:
               value: {{ .Values.namespaces.platform | quote }}
             - name: INGRESS_POD_LABELS
               value: {{ .Values.ingress.podLabels | toJson | quote }}
+            {{- if .Values.ingress.tls.enabled }}
+            - name: TLS_CERT_RESOLVER
+              value: {{ .Values.ingress.tls.certResolver | quote }}
+            {{- end }}
+            {{- if .Values.ingress.tls.certManager }}
+            - name: CERT_MANAGER
+              value: "true"
+            {{- end }}
             - name: MARIADB_IMAGE
               value: {{ .Values.images.mariadb | quote }}
             - name: WORDPRESS_IMAGE

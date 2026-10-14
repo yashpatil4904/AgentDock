@@ -32,10 +32,17 @@ spec:
         app.kubernetes.io/part-of: agentdock
     spec:
       securityContext:
-        fsGroup: 999
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
       containers:
         - name: postgres
           image: {{ .Values.images.postgres }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           imagePullPolicy: IfNotPresent
           ports:
             - name: postgres

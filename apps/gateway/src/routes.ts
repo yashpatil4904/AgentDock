@@ -1,8 +1,10 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { runChat } from "./chat.js";
-import { generateApiKey, hashApiKey, verifyPassword } from "./crypto.js";
+import { encryptSecret, generateApiKey, hashApiKey, verifyPassword } from "./crypto.js";
 import {
+  currentCredentialKey,
+  createHosted,
   createSession,
   createStore,
   createUser,
@@ -12,21 +14,31 @@ import {
   findUserByEmail,
   findUserById,
   findUserBySession,
+  hostedOwnsSlug,
   insertApiKey,
   insertServer,
   listApiKeys,
   listAudit,
+  listHosted,
   listPublicServers,
+  listServerMetrics,
   listStores,
   listUsers,
+  markHostedDeleting,
   markStoreDeleting,
+  retryHosted,
   retryStore,
   revokeApiKey,
+  serverSlugById,
   StoreLimitError,
+  takeRateSlot,
   updateServer,
 } from "./db.js";
+import { assertImageRef } from "./images.js";
+import { toolAllowed } from "./permissions.js";
+import { rateLimitPerMinute } from "./rate.js";
 import { HttpError } from "./errors.js";
-import { assertSlug, slugFromName, storeIdentity } from "./routing.js";
+import { assertSlug, hostedIdentity, slugFromName, storeIdentity } from "./routing.js";
 import { pollOnce } from "./poller.js";
 import type { AuthType, User } from "./types.js";
 import { assertUpstreamUrl } from "./url-guard.js";
@@ -125,8 +137,17 @@ api.get("/me", requireUser, (req, res: AppResponse) => {
   res.json(res.locals.user);
 });
 
-api.get("/servers", requireUser, async (_req, res) => {
-  res.json(await listPublicServers());
+api.get("/servers", requireUser, async (_req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  const servers = await listPublicServers();
+  if (user.role === "admin") {
+    res.json(servers);
+    return;
+  }
+  res.json(servers.map((server) => ({
+    ...server,
+    tools: server.tools.filter((tool) => toolAllowed(user.role, `${server.slug}__${tool.name}`)),
+  })));
 });
 
 api.post("/servers/refresh", requireUser, requireAdmin, async (_req, res) => {
@@ -175,7 +196,10 @@ api.patch("/servers/:id", requireUser, requireAdmin, async (req, res) => {
 });
 
 api.delete("/servers/:id", requireUser, requireAdmin, async (req, res) => {
-  if (!(await deleteServer(idParam(req.params.id)))) throw new HttpError(404, "Server not found");
+  const id = idParam(req.params.id);
+  const slug = await serverSlugById(id);
+  if (slug && await hostedOwnsSlug(slug)) throw new HttpError(409, "This server is hosted in the cluster. Delete it from Hosted servers.");
+  if (!(await deleteServer(id))) throw new HttpError(404, "Server not found");
   res.json({ ok: true });
 });
 
@@ -295,8 +319,54 @@ api.post("/stores/:id/retry", requireUser, async (req, res: AppResponse) => {
   res.json(retried);
 });
 
+api.get("/metrics", requireUser, requireAdmin, async (_req, res) => {
+  res.json(await listServerMetrics());
+});
+
+api.get("/hosted", requireUser, requireAdmin, async (_req, res) => {
+  res.json(await listHosted());
+});
+
+api.post("/hosted", requireUser, requireAdmin, async (req, res: AppResponse) => {
+  const user = res.locals.user as User;
+  const body = z.object({
+    name: z.string().min(1).max(80),
+    image: z.string().min(1).max(200),
+    env: z.array(z.object({
+      name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
+      value: z.string().max(4000),
+    })).max(20).default([]),
+  }).parse(req.body);
+  assertImageRef(body.image);
+  const slug = slugFromName(body.name);
+  const { namespace } = hostedIdentity(slug);
+  const envCiphertext = body.env.length ? encryptSecret(JSON.stringify(body.env), currentCredentialKey()) : null;
+  try {
+    const created = await createHosted({ ownerId: user.id, name: body.name, slug, namespace, image: body.image, envCiphertext });
+    res.status(201).json(created);
+  } catch (error) {
+    if (error instanceof Error && /duplicate key/.test(error.message)) throw new HttpError(409, "A server with that name already exists");
+    throw error;
+  }
+});
+
+api.delete("/hosted/:id", requireUser, requireAdmin, async (req, res) => {
+  const deleted = await markHostedDeleting(idParam(req.params.id));
+  if (!deleted) throw new HttpError(404, "Hosted server not found");
+  res.json(deleted);
+});
+
+api.post("/hosted/:id/retry", requireUser, requireAdmin, async (req, res) => {
+  const retried = await retryHosted(idParam(req.params.id));
+  if (!retried) throw new HttpError(404, "Failed hosted server not found");
+  res.json(retried);
+});
+
 api.post("/chat", requireUser, async (req, res: AppResponse) => {
   const user = res.locals.user as User;
+  if (!(await takeRateSlot(`user:${user.id}`, rateLimitPerMinute()))) {
+    throw new HttpError(429, "Rate limit exceeded. Try again in a minute.");
+  }
   const body = z.object({
     message: z.string().min(1).max(4000),
     history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(20).default([]),

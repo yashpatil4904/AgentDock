@@ -32,6 +32,8 @@ spec:
               value: "8080"
             - name: COOKIE_SECURE
               value: {{ .Values.gateway.cookieSecure | quote }}
+            - name: GATEWAY_PUBLIC_URL
+              value: {{ .Values.gateway.publicUrl | quote }}
             - name: GROQ_MODEL
               value: {{ .Values.gateway.groqModel | quote }}
             - name: WOOCOMMERCE_MCP_URL
@@ -46,6 +48,10 @@ spec:
               value: {{ .Values.stores.hostSuffix | quote }}
             - name: STORE_URL_SCHEME
               value: {{ .Values.stores.urlScheme | quote }}
+            - name: RATE_LIMIT_PER_MINUTE
+              value: {{ .Values.gateway.rateLimitPerMinute | default 120 | quote }}
+            - name: TOOL_DIRECT_LIMIT
+              value: {{ .Values.gateway.toolDirectLimit | default 8 | quote }}
           envFrom:
             - secretRef:
                 name: gateway

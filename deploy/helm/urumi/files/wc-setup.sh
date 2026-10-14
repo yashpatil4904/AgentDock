@@ -62,5 +62,10 @@ if ! grep -q "HTTP_AUTHORIZATION" /var/www/html/.htaccess 2>/dev/null; then
   printf '\nRewriteCond %%{HTTP:Authorization} .\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%%{HTTP:Authorization}]\n' >> /var/www/html/.htaccess
 fi
 
+mkdir -p /var/www/html/wp-content/mu-plugins
+if [ -f /scripts/agentdock-look.php ]; then
+  cp /scripts/agentdock-look.php /var/www/html/wp-content/mu-plugins/agentdock-look.php
+fi
+
 chown -R 33:33 /var/www/html
 echo "woocommerce bootstrap complete"

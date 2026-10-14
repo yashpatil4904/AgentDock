@@ -9,6 +9,12 @@ ingress:
     app.kubernetes.io/name: traefik
   shopHost: shop.example.com
   appHost: app.example.com
+  tls:
+    enabled: true
+    secretName: agentdock-tls
+    certResolver: ""
+    certManager: true
+    clusterIssuer: letsencrypt
 
 storage:
   className: local-path

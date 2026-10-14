@@ -6,16 +6,23 @@ ingress:
     app.kubernetes.io/name: ingress-nginx
   shopHost: shop.localtest.me
   appHost: app.localtest.me
+  tls:
+    enabled: true
+    secretName: localtest-tls
+    certResolver: ""
 
 storage:
   className: local-path
 
 wordpress:
-  url: http://shop.localtest.me
+  url: https://shop.localtest.me
 
 gateway:
-  publicUrl: http://app.localtest.me
-  cookieSecure: false
+  publicUrl: https://app.localtest.me
+  cookieSecure: true
+
+stores:
+  urlScheme: https
 
 images:
   pullPolicy: IfNotPresent

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 deploy/helm/urumi/secrets.local.yaml
+deploy/helm/urumi/.local-tls/
 *.log
 .DS_Store
 .cursor/

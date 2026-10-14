@@ -26,7 +26,13 @@ function meta(store: StoreRecord, name: string, kindName = name): K8sObject["met
   };
 }
 
-export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secret: StoreSecret, scripts: { sh: string; php: string }): K8sObject[] {
+export interface StoreScripts {
+  sh: string;
+  php: string;
+  look: string;
+}
+
+export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secret: StoreSecret, scripts: StoreScripts): K8sObject[] {
   const ns = store.namespace;
   const wordpressConfig = [
     `define('WP_HOME', '${store.url}');`,
@@ -116,6 +122,7 @@ export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secr
     data: {
       "wc-setup.sh": scripts.sh,
       "wc-setup.php": scripts.php,
+      "agentdock-look.php": scripts.look,
     },
   };
 
@@ -133,11 +140,12 @@ export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secr
       template: {
         metadata: { labels: labels("mariadb", store.slug) },
         spec: {
-          securityContext: { fsGroup: 999 },
+          securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999 },
           containers: [
             {
               name: "mariadb",
               image: config.mariadbImage,
+              securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } },
               imagePullPolicy: config.pullPolicy,
               args: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"],
               ports: [{ name: "mysql", containerPort: 3306 }],
@@ -171,13 +179,43 @@ export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secr
         metadata: { labels: labels("wordpress", store.slug) },
         spec: {
           securityContext: { fsGroup: 33 },
+          initContainers: [
+            {
+              name: "prepare",
+              image: config.wordpressImage,
+              imagePullPolicy: config.pullPolicy,
+              command: ["docker-entrypoint.sh", "true"],
+              env: [
+                { name: "WORDPRESS_DB_HOST", value: "mariadb" },
+                { name: "WORDPRESS_DB_NAME", valueFrom: { secretKeyRef: { name: "shop", key: "WORDPRESS_DB_NAME" } } },
+                { name: "WORDPRESS_DB_USER", valueFrom: { secretKeyRef: { name: "shop", key: "WORDPRESS_DB_USER" } } },
+                { name: "WORDPRESS_DB_PASSWORD", valueFrom: { secretKeyRef: { name: "shop", key: "WORDPRESS_DB_PASSWORD" } } },
+              ],
+              volumeMounts: [{ name: "data", mountPath: "/var/www/html" }],
+              securityContext: { runAsUser: 0 },
+            },
+          ],
           containers: [
             {
               name: "wordpress",
               image: config.wordpressImage,
               imagePullPolicy: config.pullPolicy,
-              ports: [{ name: "http", containerPort: 80 }],
+              command: ["sh", "-c", "mkdir -p /tmp/apache2 && exec apache2 -DFOREGROUND"],
+              ports: [{ name: "http", containerPort: 8080 }],
+              securityContext: {
+                runAsNonRoot: true,
+                runAsUser: 33,
+                runAsGroup: 33,
+                allowPrivilegeEscalation: false,
+                capabilities: { drop: ["ALL"] },
+              },
               env: [
+                { name: "APACHE_RUN_DIR", value: "/tmp/apache2" },
+                { name: "APACHE_PID_FILE", value: "/tmp/apache2.pid" },
+                { name: "APACHE_LOCK_DIR", value: "/tmp" },
+                { name: "APACHE_RUN_USER", value: "www-data" },
+                { name: "APACHE_RUN_GROUP", value: "www-data" },
+                { name: "APACHE_LOG_DIR", value: "/tmp" },
                 { name: "WORDPRESS_DB_HOST", value: "mariadb" },
                 { name: "WORDPRESS_DB_NAME", valueFrom: { secretKeyRef: { name: "shop", key: "WORDPRESS_DB_NAME" } } },
                 { name: "WORDPRESS_DB_USER", valueFrom: { secretKeyRef: { name: "shop", key: "WORDPRESS_DB_USER" } } },
@@ -187,10 +225,20 @@ export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secr
               resources: config.resources.wordpress,
               readinessProbe: { httpGet: { path: "/wp-login.php", port: "http" }, initialDelaySeconds: 20, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 12 },
               livenessProbe: { httpGet: { path: "/wp-login.php", port: "http" }, initialDelaySeconds: 40, periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 6 },
-              volumeMounts: [{ name: "data", mountPath: "/var/www/html" }],
+              volumeMounts: [
+                { name: "data", mountPath: "/var/www/html" },
+                { name: "apache-ports", mountPath: "/etc/apache2/ports.conf", subPath: "ports.conf" },
+                { name: "apache-site", mountPath: "/etc/apache2/sites-enabled/000-default.conf", subPath: "000-default.conf" },
+                { name: "apache-nonroot", mountPath: "/etc/apache2/conf-enabled/nonroot.conf", subPath: "nonroot.conf" },
+              ],
             },
           ],
-          volumes: [{ name: "data", persistentVolumeClaim: { claimName: "wordpress" } }],
+          volumes: [
+            { name: "data", persistentVolumeClaim: { claimName: "wordpress" } },
+            { name: "apache-ports", configMap: { name: "wordpress-apache", items: [{ key: "ports.conf", path: "ports.conf" }] } },
+            { name: "apache-site", configMap: { name: "wordpress-apache", items: [{ key: "000-default.conf", path: "000-default.conf" }] } },
+            { name: "apache-nonroot", configMap: { name: "wordpress-apache", items: [{ key: "nonroot.conf", path: "nonroot.conf" }] } },
+          ],
         },
       },
     },
@@ -273,12 +321,24 @@ export function storeObjects(store: StoreRecord, config: ProvisionerConfig, secr
     },
   };
 
+  const apache: K8sObject = {
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    metadata: meta(store, "wordpress-apache", "wordpress"),
+    data: {
+      "ports.conf": "Listen 8080\n",
+      "000-default.conf": "<VirtualHost *:8080>\n  DocumentRoot /var/www/html\n  ErrorLog /proc/self/fd/2\n  CustomLog /proc/self/fd/1 combined\n</VirtualHost>\n",
+      "nonroot.conf": "PidFile /tmp/apache2.pid\nMutex posixsem\n",
+    },
+  };
+
   return [
     namespace,
     quota,
     limitRange,
     credentials,
     scriptsMap,
+    apache,
     mariadbPvc,
     wordpressPvc,
     service(store, "mariadb", "mysql", 3306),
@@ -320,15 +380,25 @@ function service(store: StoreRecord, name: string, portName: string, port: numbe
 
 function ingress(store: StoreRecord, config: ProvisionerConfig): K8sObject {
   const host = new URL(store.url).host;
+  const secure = store.url.startsWith("https://");
+  const annotations: Record<string, string> = { "nginx.ingress.kubernetes.io/proxy-body-size": "20m" };
+  if (secure && config.certManager) {
+    annotations["cert-manager.io/cluster-issuer"] = "letsencrypt";
+    annotations["traefik.ingress.kubernetes.io/router.middlewares"] = "kube-system-redirect-https@kubernetescrd";
+  } else if (secure && config.tlsCertResolver) {
+    annotations["traefik.ingress.kubernetes.io/router.entrypoints"] = "websecure";
+    annotations["traefik.ingress.kubernetes.io/router.tls.certresolver"] = config.tlsCertResolver;
+  }
   return {
     apiVersion: "networking.k8s.io/v1",
     kind: "Ingress",
     metadata: {
       ...meta(store, "storefront", "storefront"),
-      annotations: { "nginx.ingress.kubernetes.io/proxy-body-size": "20m" },
+      annotations,
     },
     spec: {
       ingressClassName: config.ingressClass,
+      ...(secure ? { tls: [{ hosts: [host], ...(config.certManager ? { secretName: "store-tls" } : {}) }] } : {}),
       rules: [
         {
           host,
@@ -364,7 +434,23 @@ function networkPolicies(store: StoreRecord, config: ProvisionerConfig): K8sObje
       },
     ],
   };
+  const dns = {
+    to: [{ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "kube-system" } } }],
+    ports: [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }],
+  };
   return [
+    {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "NetworkPolicy",
+      metadata: meta(store, "default-deny"),
+      spec: { podSelector: {}, policyTypes: ["Ingress", "Egress"] },
+    },
+    {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "NetworkPolicy",
+      metadata: meta(store, "allow-dns"),
+      spec: { podSelector: {}, policyTypes: ["Egress"], egress: [dns] },
+    },
     {
       apiVersion: "networking.k8s.io/v1",
       kind: "NetworkPolicy",
@@ -389,12 +475,19 @@ function networkPolicies(store: StoreRecord, config: ProvisionerConfig): K8sObje
       metadata: meta(store, "wordpress"),
       spec: {
         podSelector: { matchLabels: { "app.kubernetes.io/name": "wordpress" } },
-        policyTypes: ["Ingress"],
+        policyTypes: ["Ingress", "Egress"],
         ingress: [
-          { ...fromIngress, ports: [{ protocol: "TCP", port: 80 }] },
+          { ...fromIngress, ports: [{ protocol: "TCP", port: 8080 }] },
           {
             from: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "woocommerce-mcp" } } }],
-            ports: [{ protocol: "TCP", port: 80 }],
+            ports: [{ protocol: "TCP", port: 8080 }],
+          },
+        ],
+        egress: [
+          dns,
+          {
+            to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "mariadb" } } }],
+            ports: [{ protocol: "TCP", port: 3306 }],
           },
         ],
       },
@@ -410,7 +503,7 @@ function networkPolicies(store: StoreRecord, config: ProvisionerConfig): K8sObje
         egress: [
           {
             to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "wordpress" } } }],
-            ports: [{ protocol: "TCP", port: 80 }],
+            ports: [{ protocol: "TCP", port: 8080 }],
           },
           {
             to: [{ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "kube-system" } } }],
@@ -419,6 +512,23 @@ function networkPolicies(store: StoreRecord, config: ProvisionerConfig): K8sObje
               { protocol: "TCP", port: 53 },
             ],
           },
+        ],
+      },
+    },
+    {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "NetworkPolicy",
+      metadata: meta(store, "wc-bootstrap"),
+      spec: {
+        podSelector: { matchLabels: { "app.kubernetes.io/name": "wc-bootstrap" } },
+        policyTypes: ["Egress"],
+        egress: [
+          dns,
+          {
+            to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "mariadb" } } }],
+            ports: [{ protocol: "TCP", port: 3306 }],
+          },
+          { ports: [{ protocol: "TCP", port: 80 }, { protocol: "TCP", port: 443 }] },
         ],
       },
     },

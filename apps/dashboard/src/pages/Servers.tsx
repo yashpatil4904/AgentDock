@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type McpServer, type User } from "../api";
+import { api, ApiError, type HostedServer, type McpServer, type User } from "../api";
 
 const emptyForm = {
   name: "",
@@ -16,9 +16,14 @@ export function ServersPage({ user }: { user: User }) {
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hosted, setHosted] = useState<HostedServer[]>([]);
+  const [imageName, setImageName] = useState("");
+  const [imageRef, setImageRef] = useState("");
+  const [imageEnv, setImageEnv] = useState("");
 
   async function load() {
     setServers(await api.servers());
+    if (user.role === "admin") setHosted(await api.hosted());
   }
 
   useEffect(() => {
@@ -86,6 +91,62 @@ export function ServersPage({ user }: { user: User }) {
             <button className="btn secondary" type="button" onClick={() => { setBusy(true); api.refreshServers().then(setServers).catch(onError).finally(() => setBusy(false)); }}>Refresh status</button>
           </div>
         </form>
+      ) : null}
+      {user.role === "admin" ? (
+        <form
+          className="card stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            const env = imageEnv.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+              const index = line.indexOf("=");
+              return { name: index === -1 ? line : line.slice(0, index), value: index === -1 ? "" : line.slice(index + 1) };
+            });
+            api.createHosted(imageName, imageRef, env).then(() => {
+              setImageName("");
+              setImageRef("");
+              setImageEnv("");
+              return load();
+            }).catch(onError).finally(() => setBusy(false));
+          }}
+        >
+          <strong>Deploy from an image</strong>
+          <p className="muted">The image must listen on port 8080 and serve MCP at <code>/mcp</code>. It gets its own namespace, Secret, limits, and NetworkPolicy.</p>
+          <div className="grid-2">
+            <label>Name<input value={imageName} onChange={(event) => setImageName(event.target.value)} required /></label>
+            <label>Image<input value={imageRef} onChange={(event) => setImageRef(event.target.value)} placeholder="ghcr.io/org/server:1.0.0" required /></label>
+          </div>
+          <label>Environment <span className="muted">KEY=value, one per line. Stored encrypted, then only in the namespace Secret.</span>
+            <textarea value={imageEnv} onChange={(event) => setImageEnv(event.target.value)} rows={3} />
+          </label>
+          <button className="btn" disabled={busy} type="submit">Deploy</button>
+        </form>
+      ) : null}
+      {hosted.length ? (
+        <div className="panel">
+          <table>
+            <thead><tr><th>Hosted server</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {hosted.map((row) => (
+                <tr key={row.id}>
+                  <td>
+                    <strong>{row.name}</strong>
+                    <div className="muted">{row.image}</div>
+                    <div className="muted">{row.namespace}</div>
+                    {row.error ? <div className="error">{row.error}</div> : null}
+                    {row.detail ? <div className="muted">{row.detail}</div> : null}
+                  </td>
+                  <td><span className={`pill ${row.status}`}>{row.status}</span></td>
+                  <td>
+                    {row.status === "failed" ? <button className="btn secondary" type="button" onClick={() => api.retryHosted(row.id).then(load).catch(onError)}>Retry</button> : null}
+                    {row.status === "deleting" ? null : <button className="btn danger" type="button" onClick={() => { if (confirm(`Delete ${row.name}?`)) api.deleteHosted(row.id).then(load).catch(onError); }}>Delete</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
       <div className="panel">
         <table>

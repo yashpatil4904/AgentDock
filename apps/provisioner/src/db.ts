@@ -53,6 +53,14 @@ export async function activeStores(): Promise<StoreRecord[]> {
   return rows.map(mapStore);
 }
 
+export async function liveStores(): Promise<StoreRecord[]> {
+  const { rows } = await pool.query<StoreSqlRow>(
+    `SELECT id, name, slug, namespace, status, url, mcp_server_id, provision_started_at, admin_password_ciphertext
+     FROM stores WHERE status IN ('provisioning', 'ready') ORDER BY created_at`,
+  );
+  return rows.map(mapStore);
+}
+
 export async function clearAdminPassword(id: string): Promise<void> {
   await pool.query(
     "UPDATE stores SET admin_password_ciphertext = NULL, updated_at = now() WHERE id = $1 AND admin_password_ciphertext IS NOT NULL",

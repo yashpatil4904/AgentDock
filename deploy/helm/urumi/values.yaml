@@ -22,6 +22,9 @@ ingress:
     app.kubernetes.io/name: ingress-nginx
   shopHost: shop.localtest.me
   appHost: app.localtest.me
+  tls:
+    enabled: false
+    certResolver: letsencrypt
 
 storage:
   className: local-path
@@ -59,7 +62,9 @@ gateway:
   publicUrl: http://app.localtest.me
   cookieSecure: false
   groqModel: openai/gpt-oss-120b
-  replicas: 1
+  replicas: 2
+  rateLimitPerMinute: 120
+  toolDirectLimit: 8
   adminName: Admin
 
 stores:

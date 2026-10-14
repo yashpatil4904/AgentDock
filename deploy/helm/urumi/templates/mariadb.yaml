@@ -32,10 +32,17 @@ spec:
         app.kubernetes.io/part-of: agentdock
     spec:
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
         fsGroup: 999
       containers:
         - name: mariadb
           image: {{ .Values.images.mariadb }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           imagePullPolicy: IfNotPresent
           args: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
           ports:

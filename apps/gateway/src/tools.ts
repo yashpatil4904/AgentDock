@@ -1,5 +1,6 @@
 import { collectTools } from "./aggregate.js";
-import { getServerBySlug, insertAudit, listEnabledInternal, markServer } from "./db.js";
+import { getServerBySlug, insertAudit, listEnabledInternal, markServer, recordServerMetric } from "./db.js";
+import { permissionError, toolAllowed } from "./permissions.js";
 import { parseQualifiedToolName } from "./routing.js";
 import type { ToolCallResult, User } from "./types.js";
 import { callTimeoutMs, callUpstreamTool, listTimeoutMs, listUpstreamTools, upstreamError } from "./upstream.js";
@@ -35,21 +36,29 @@ export async function callAggregatedTool(user: User, qualifiedName: string, args
   const serverSlug = parsed?.slug ?? "unknown";
   const toolName = parsed?.tool ?? qualifiedName;
   const finish = async (success: boolean, error: string | null, result: ToolCallResult) => {
+    const durationMs = Date.now() - started.getTime();
     await insertAudit({
       userId: user.id,
       userEmail: user.email,
       serverSlug,
       tool: toolName,
       startedAt: started,
-      durationMs: Date.now() - started.getTime(),
+      durationMs,
       success,
       error,
     }).catch((auditError) => console.error("audit write failed", auditError));
+    if (serverSlug !== "unknown") {
+      await recordServerMetric(serverSlug, durationMs, success).catch((metricError) => console.error("metric write failed", metricError));
+    }
     return result;
   };
 
   if (!parsed) {
     const error = `Tool "${qualifiedName}" is missing a server prefix. Expected {server}__{tool}.`;
+    return finish(false, error, { content: [{ type: "text", text: error }], isError: true });
+  }
+  if (!toolAllowed(user.role, qualifiedName)) {
+    const error = permissionError(qualifiedName);
     return finish(false, error, { content: [{ type: "text", text: error }], isError: true });
   }
 

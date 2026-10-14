@@ -10,6 +10,8 @@ export interface ProvisionerConfig {
   ingressNamespace: string;
   gatewayNamespace: string;
   ingressPodLabels: Record<string, string>;
+  tlsCertResolver: string;
+  certManager: boolean;
   mariadbImage: string;
   wordpressImage: string;
   wordpressCliImage: string;
@@ -48,6 +50,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Provisioner
     ingressNamespace: required(env, "INGRESS_NAMESPACE"),
     gatewayNamespace: required(env, "GATEWAY_NAMESPACE"),
     ingressPodLabels,
+    tlsCertResolver: env.TLS_CERT_RESOLVER ?? "",
+    certManager: env.CERT_MANAGER === "true",
     mariadbImage: required(env, "MARIADB_IMAGE"),
     wordpressImage: required(env, "WORDPRESS_IMAGE"),
     wordpressCliImage: required(env, "WORDPRESS_CLI_IMAGE"),

@@ -39,12 +39,14 @@ helm upgrade --install agentdock deploy/helm/urumi `
   -f deploy/helm/urumi/values-local.yaml `
   -f deploy/helm/urumi/secrets.local.yaml
 
+& (Join-Path $PSScriptRoot "local-tls.ps1")
+
 kubectl -n shop rollout status deployment/wordpress --timeout=300s
 kubectl -n shop wait --for=condition=complete job/wc-bootstrap --timeout=900s
 kubectl -n platform rollout status deployment/gateway --timeout=180s
 kubectl -n platform rollout status deployment/dashboard --timeout=180s
 kubectl -n platform rollout status deployment/provisioner --timeout=180s
 
-Write-Host "Storefront: http://shop.localtest.me"
-Write-Host "Dashboard:  http://app.localtest.me"
-Write-Host "MCP:        http://app.localtest.me/mcp"
+Write-Host "Storefront: https://shop.localtest.me"
+Write-Host "Dashboard:  https://app.localtest.me"
+Write-Host "MCP:        https://app.localtest.me/mcp"

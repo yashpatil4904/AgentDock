@@ -7,6 +7,7 @@ import { ChatPage } from "./pages/Chat";
 import { KeysPage } from "./pages/Keys";
 import { LoginPage } from "./pages/Login";
 import { MembersPage } from "./pages/Members";
+import { MetricsPage } from "./pages/Metrics";
 import { ServersPage } from "./pages/Servers";
 import { StoresPage } from "./pages/Stores";
 
@@ -28,6 +29,7 @@ export function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/keys" element={<KeysPage user={user} />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/metrics" element={user.role === "admin" ? <MetricsPage /> : <Navigate to="/" replace />} />
         <Route path="/members" element={user.role === "admin" ? <MembersPage /> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

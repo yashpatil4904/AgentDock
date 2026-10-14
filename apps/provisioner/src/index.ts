@@ -3,20 +3,24 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { configFromEnv } from "./config.js";
-import { activeStores, pool } from "./db.js";
+import { activeStores, liveStores, pool } from "./db.js";
 import { Cluster } from "./k8s.js";
+import { reconcileHostedServers } from "./hosted.js";
 import { reconcileStore } from "./reconcile.js";
+import { storeObjects, type StoreSecret } from "./resources.js";
 
 const tickIntervalMs = 5_000;
 let lastTick = Date.now();
 
-async function tick(cluster: Cluster, scripts: { sh: string; php: string }): Promise<void> {
+async function tick(cluster: Cluster, scripts: { sh: string; php: string; look: string }): Promise<void> {
   const config = configFromEnv();
   const client = await pool.connect();
   try {
     const lock = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(84215045) AS locked");
     if (!lock.rows[0]?.locked) return;
     try {
+      await reconcileHostedServers(cluster, config);
+      await syncRunningStores(cluster, config, scripts);
       const stores = await activeStores();
       await Promise.all(stores.map(async (store) => {
         try {
@@ -39,6 +43,31 @@ async function tick(cluster: Cluster, scripts: { sh: string; php: string }): Pro
   lastTick = Date.now();
 }
 
+const unusedSecret: StoreSecret = {
+  rootPassword: "unused",
+  dbPassword: "unused",
+  adminPassword: "unused",
+  consumerKey: "unused",
+  consumerSecret: "unused",
+};
+
+async function syncRunningStores(cluster: Cluster, config: ReturnType<typeof configFromEnv>, scripts: { sh: string; php: string; look: string }): Promise<void> {
+  const stores = (await liveStores()).filter((store) => store.namespace.startsWith("store-"));
+  await Promise.all(stores.map(async (store) => {
+    try {
+      const objects = storeObjects(store, config, unusedSecret, scripts);
+      for (const obj of objects) {
+        const trackDeployment = obj.kind === "Deployment" && (obj.metadata.name === "wordpress" || obj.metadata.name === "mariadb");
+        const trackConfig = obj.kind === "ConfigMap" && obj.metadata.name === "wordpress-apache";
+        if (obj.kind !== "NetworkPolicy" && obj.kind !== "Ingress" && !trackDeployment && !trackConfig) continue;
+        await cluster.replace(obj);
+      }
+    } catch (error) {
+      console.error(`store ${store.slug}: ${error instanceof Error ? error.message : "policy update failed"}`);
+    }
+  }));
+}
+
 async function waitForStores(): Promise<void> {
   for (;;) {
     try {
@@ -58,6 +87,7 @@ async function main(): Promise<void> {
   const scripts = {
     sh: readFileSync(path.join(config.scriptsDir, "wc-setup.sh"), "utf8"),
     php: readFileSync(path.join(config.scriptsDir, "wc-setup.php"), "utf8"),
+    look: readFileSync(path.join(config.scriptsDir, "agentdock-look.php"), "utf8"),
   };
   const cluster = new Cluster();
   lastTick = Date.now();

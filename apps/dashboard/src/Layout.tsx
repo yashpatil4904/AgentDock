@@ -12,6 +12,7 @@ export function Layout({ user, onLogout, children }: { user: User; onLogout: () 
         <NavLink to="/chat">Chat</NavLink>
         <NavLink to="/keys">API keys</NavLink>
         <NavLink to="/audit">Audit log</NavLink>
+        {user.role === "admin" ? <NavLink to="/metrics">Metrics</NavLink> : null}
         {user.role === "admin" ? <NavLink to="/members">Members</NavLink> : null}
         <div className="who">
           <div>{user.name}</div>

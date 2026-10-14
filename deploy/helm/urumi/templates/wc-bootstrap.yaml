@@ -8,6 +8,8 @@ data:
 {{ .Files.Get "files/wc-setup.sh" | indent 4 }}
   wc-setup.php: |
 {{ .Files.Get "files/wc-setup.php" | indent 4 }}
+  agentdock-look.php: |
+{{ .Files.Get "files/agentdock-look.php" | indent 4 }}
 ---
 apiVersion: batch/v1
 kind: Job

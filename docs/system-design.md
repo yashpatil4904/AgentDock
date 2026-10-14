@@ -10,7 +10,7 @@ Weather (Open-Meteo) and FX (Frankfurter) are the other two upstreams. They are 
 
 The gateway is both an MCP client and an MCP server. Chat and external clients speak only to the gateway. The gateway opens its own Streamable HTTP client to each upstream and attaches that upstream's stored credential. The caller's API key is checked and then dropped. It is not copied onto the upstream request.
 
-Sessions are stateless. Each `/mcp` request builds a new server and transport with `sessionIdGenerator: undefined` and `enableJsonResponse: true`. A dropped connection does not leave a session, and a second gateway replica would not need sticky sessions. This chart runs one replica. The property is there so a later replica does not require a different protocol.
+Sessions are stateless. Each `/mcp` request builds a new server and transport with `sessionIdGenerator: undefined` and `enableJsonResponse: true`. A dropped connection does not leave a session. The gateway Deployment runs two replicas, and either one can serve the next call, because the tokens and the upstream credentials are in Postgres.
 
 ## Tool aggregation, routing, and failures
 
@@ -37,6 +37,7 @@ Upstream URL credentials are AES-256-GCM ciphertext in Postgres. The 32-byte key
 - Storage class stays `local-path`, which k3s already installs. Kind has to install that provisioner first.
 - Images are registry tags (or tags imported with `k3s ctr images import`) instead of `:local` images loaded into Kind.
 - Secrets stay in a file outside git, passed with `-f`. Nothing secret is in the image or the chart defaults.
+- TLS uses cert-manager and a Let's Encrypt ClusterIssuer named `letsencrypt`. The certificate is the Secret `agentdock-tls`. HTTP-01 stays on port 80, so the Traefik entrypoint itself does not redirect. The chart adds a redirect middleware on the shop and dashboard Ingress only. Local Kind keeps a certificate trusted on the workstation, because Let's Encrypt cannot validate `localtest.me`.
 
 ## Extra stores
 
@@ -45,6 +46,20 @@ The platform shop in the `shop` namespace stays the Helm-managed store. Its tool
 Create is an insert. The work happens in the reconciler, so several stores proceed at once, and a restart continues from the row. Steps create a resource only when it is missing, so a retry does not rotate the database password or duplicate the namespace. A failed bootstrap Job is deleted and created again. After 15 minutes the row becomes `failed` with the step it was stuck on. Retry resets the clock and keeps the namespace. Delete drops the MCP registration first, then the namespace, which takes the volumes and Secrets with it. The row is removed only after the namespace is gone.
 
 The provisioner holds a Postgres advisory lock for each pass, so a second replica would wait instead of creating the same Job twice. This chart runs one replica.
+
+## Roles, search, OAuth, and scale
+
+A member's tool list omits any tool whose bare name starts with `create_`, `update_`, `delete_`, or `remove_`. Calling one returns a tool error and an audit row. Admins still see and call them.
+
+The gateway also exposes `search_tools` and `call_tool`. `search_tools` queries an inverted index: a token from the tool name weighs more than the same token in the description. External clients still receive the full list, so Cursor can show every enabled server. Chat passes the full list to the model until there are more than eight tools, then it passes only the search and call tools. The threshold is `TOOL_DIRECT_LIMIT`.
+
+OAuth 2.1 sits beside API keys. A client discovers the protected-resource and authorization-server metadata, registers a redirect URL, and signs in with the same dashboard password. The gateway stores the authorization code and the access token as SHA-256. Either replica can validate the token because the row is in Postgres. A missing or revoked credential gets `401` and a `WWW-Authenticate` header pointing at the metadata.
+
+The gateway Deployment runs two replicas. MCP stays stateless (`sessionIdGenerator` unset, JSON responses), so a call does not stick to the pod that listed the tools. Upstream credentials are read from Postgres on that request. `RATE_LIMIT_PER_MINUTE` counts requests per user in Postgres for the last minute.
+
+`GET /metrics` is Prometheus text for calls, errors, and total latency, labeled by server slug. The dashboard Metrics page reads the same table. It is not on the public Ingress; only `/`, `/api`, and `/mcp` are.
+
+An admin can deploy an MCP server from a container image. The row is `hosted_servers`. The provisioner creates namespace `hosted-<slug>` with a Secret for the env vars, a ResourceQuota, a LimitRange, a Deployment, a Service, and a NetworkPolicy that allows ingress only from the gateway. When the pod is ready it registers `http://mcp.<namespace>.svc.cluster.local:8080/mcp`. Delete removes the registration and the namespace. The image must listen on 8080 and serve `/mcp`.
 
 ## Upgrade and rollback
 
