@@ -1,6 +1,14 @@
 import type { Role } from "./types.js";
 
-const writeTool = /^(create|update|delete|remove)_/;
+/** Bare tool names a member may call on any server. A name that is not listed is denied, including a write that does not start with create_ or update_. */
+export const memberToolNames = new Set([
+  "list_products",
+  "list_orders",
+  "get_order",
+  "get_forecast",
+  "get_rate",
+  "convert",
+]);
 
 /** The bare tool name, after the server prefix. */
 export function bareToolName(toolName: string): string {
@@ -8,16 +16,12 @@ export function bareToolName(toolName: string): string {
   return index === -1 ? toolName : toolName.slice(index + 2);
 }
 
-export function isWriteTool(toolName: string): boolean {
-  return writeTool.test(bareToolName(toolName));
-}
-
-/** Members can list and read. Creating, updating, and deleting stay with admins. */
+/** Admins may call any tool. Members may call only the names in memberToolNames. Checked before the upstream call. */
 export function toolAllowed(role: Role, toolName: string): boolean {
   if (role === "admin") return true;
-  return !isWriteTool(toolName);
+  return memberToolNames.has(bareToolName(toolName));
 }
 
 export function permissionError(toolName: string): string {
-  return `Tool "${toolName}" is limited to admins. Members can read, not create, update, or delete.`;
+  return `Tool "${toolName}" is not on the member allow list.`;
 }

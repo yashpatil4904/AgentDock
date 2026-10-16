@@ -49,7 +49,7 @@ The provisioner holds a Postgres advisory lock for each pass, so a second replic
 
 ## Roles, search, OAuth, and scale
 
-A member's tool list omits any tool whose bare name starts with `create_`, `update_`, `delete_`, or `remove_`. Calling one returns a tool error and an audit row. Admins still see and call them.
+A member may call only the bare names on an allow list: `list_products`, `list_orders`, `get_order`, `get_forecast`, `get_rate`, and `convert`. The server prefix does not matter, so `east__list_orders` is allowed and `woocommerce__make_product` is not. The check runs before the upstream call, on `tools/call` and on `call_tool`, and the tool is omitted from that member's list. A rejection is an audit row. Admins can call every tool.
 
 The gateway also exposes `search_tools` and `call_tool`. `search_tools` queries an inverted index: a token from the tool name weighs more than the same token in the description. External clients still receive the full list, so Cursor can show every enabled server. Chat passes the full list to the model until there are more than eight tools, then it passes only the search and call tools. The threshold is `TOOL_DIRECT_LIMIT`.
 

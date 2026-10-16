@@ -4,7 +4,7 @@ The platform shop is one team sharing a store. Stores created from the dashboard
 
 ## Shared upstream credentials
 
-The WooCommerce consumer key lives in a Secret on the MCP server and, for servers an admin adds later, as encrypted ciphertext in Postgres. A member never receives it. What they can do is call the tools the gateway exposes for their role. Members can list products and orders and can call weather and FX. Creating products and changing order status are admin-only: those tool names are hidden and rejected. That is the store's capability, exercised as themselves, with an audit row. They cannot read the key out of the dashboard, the MCP `tools/list` payload, or a tool result. Stealing a member API key lets someone act as that member until the key is revoked. It does not reveal the WooCommerce key, so rotating the member key does not require rotating the store key.
+The WooCommerce consumer key lives in a Secret on the MCP server and, for servers an admin adds later, as encrypted ciphertext in Postgres. A member never receives it. What they can do is call the bare tool names on the member allow list: list products, list orders, get an order, and the read-only weather and FX tools. Any other name is hidden and rejected before the upstream call, including a write that is not named `create_` or `update_`. That is the store's capability, exercised as themselves, with an audit row. They cannot read the key out of the dashboard, the MCP `tools/list` payload, or a tool result. Stealing a member API key lets someone act as that member until the key is revoked. It does not reveal the WooCommerce key, so rotating the member key does not require rotating the store key.
 
 ## Why client tokens are not forwarded
 
